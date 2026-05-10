@@ -15,7 +15,8 @@ function SyncBadge() {
       setPending(await pendingCount());
     };
     void refresh();
-    return subscribe(refresh);
+    const unsub = subscribe(refresh);
+    return () => { unsub; };
   }, []);
 
   const icon = {
