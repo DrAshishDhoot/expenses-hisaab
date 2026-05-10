@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, Outlet, useLocation } from "@tanstack/react-router";
+import { Link, useLocation, Navigate } from "@tanstack/react-router";
+import { useAuth } from "@/lib/auth";
+import type { ReactNode } from "react";
 import { Home, Plus, ListOrdered, Tags, Settings as SettingsIcon, Wifi, WifiOff, RefreshCw, AlertTriangle, Check } from "lucide-react";
 import { subscribe, syncState, pendingCount, fullSync } from "@/lib/sync";
 import { useAuth } from "@/lib/auth";
