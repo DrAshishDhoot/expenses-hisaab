@@ -4,7 +4,6 @@ import { useAuth } from "@/lib/auth";
 import type { ReactNode } from "react";
 import { Home, Plus, ListOrdered, Tags, Settings as SettingsIcon, Wifi, WifiOff, RefreshCw, AlertTriangle, Check } from "lucide-react";
 import { subscribe, syncState, pendingCount, fullSync } from "@/lib/sync";
-import { useAuth } from "@/lib/auth";
 
 function SyncBadge() {
   const [state, setState] = useState(syncState());
@@ -50,8 +49,9 @@ const tabs = [
   { to: "/settings", label: "More", icon: SettingsIcon, exact: false },
 ];
 
-export default function AppShell() {
+export default function AppShell({ children }: { children: ReactNode }) {
   const loc = useLocation();
+  const { user, loading } = useAuth();
   const [online, setOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
 
   useEffect(() => {
@@ -64,6 +64,9 @@ export default function AppShell() {
       window.removeEventListener("offline", off);
     };
   }, []);
+
+  if (loading) return <div className="grid min-h-svh place-items-center text-muted-foreground">Loading…</div>;
+  if (!user) return <Navigate to="/login" />;
 
   return (
     <div className="relative min-h-svh">
@@ -81,7 +84,7 @@ export default function AppShell() {
       </header>
 
       <main className="relative z-10 mx-auto max-w-2xl px-4 pb-28 pt-4">
-        <Outlet />
+        {children}
       </main>
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border/40 bg-background/85 backdrop-blur-xl">
