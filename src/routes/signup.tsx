@@ -3,7 +3,7 @@ import { createFileRoute, Link, useNavigate, Navigate } from "@tanstack/react-ro
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
-import { AuthShell, Input } from "./login";
+import { AuthShell, Input, GoogleButton } from "./login";
 
 export const Route = createFileRoute("/signup")({
   component: SignupPage,
@@ -15,16 +15,15 @@ function SignupPage() {
   const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
   const [busy, setBusy] = useState(false);
 
   if (!loading && user) return <Navigate to="/" />;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.length < 6) {
-      toast.error("Use at least 6 characters");
-      return;
-    }
+    if (password.length < 6) { toast.error("Use at least 6 characters"); return; }
+    if (password !== password2) { toast.error("Passwords do not match"); return; }
     setBusy(true);
     const { error } = await supabase.auth.signUp({
       email,
@@ -42,9 +41,16 @@ function SignupPage() {
       <h1 className="font-display text-3xl font-semibold">Create account</h1>
       <p className="mt-1 text-sm text-muted-foreground">Start tracking expenses in seconds.</p>
 
-      <form onSubmit={submit} className="mt-6 space-y-3">
+      <GoogleButton label="Sign up with Google" />
+
+      <div className="my-4 flex items-center gap-3 text-[11px] uppercase tracking-widest text-muted-foreground">
+        <div className="h-px flex-1 bg-border" /> or email <div className="h-px flex-1 bg-border" />
+      </div>
+
+      <form onSubmit={submit} className="space-y-3">
         <Input label="Email" type="email" value={email} onChange={setEmail} autoComplete="email" required />
         <Input label="Password" type="password" value={password} onChange={setPassword} autoComplete="new-password" required />
+        <Input label="Confirm password" type="password" value={password2} onChange={setPassword2} autoComplete="new-password" required />
         <button disabled={busy} className="w-full rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/30 disabled:opacity-50">
           {busy ? "Creating…" : "Create account"}
         </button>
