@@ -25,9 +25,15 @@ function SyncBadge() {
     syncing: <RefreshCw className="h-3.5 w-3.5 animate-spin" />,
     error: <AlertTriangle className="h-3.5 w-3.5" />,
     offline: <WifiOff className="h-3.5 w-3.5" />,
+    disconnected: <AlertTriangle className="h-3.5 w-3.5" />,
   }[state];
 
-  const label = state === "idle" ? (pending ? `${pending} pending` : "Synced") : state === "syncing" ? "Syncing" : state === "error" ? "Sync error" : "Offline";
+  const label =
+    state === "idle" ? (pending ? `${pending} pending` : "Synced")
+    : state === "syncing" ? "Syncing"
+    : state === "error" ? "Sync error"
+    : state === "disconnected" ? "Drive not linked"
+    : "Offline";
 
   return (
     <button
