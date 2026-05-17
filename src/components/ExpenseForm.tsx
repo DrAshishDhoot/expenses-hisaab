@@ -101,26 +101,20 @@ export default function ExpenseForm({ expenseId }: { expenseId?: string }) {
         </div>
 
         <Field label="Category">
-          <select
+          <ChipGroup
             value={categoryId}
-            onChange={(e) => { setCategoryId(e.target.value); setSubcategoryId(""); }}
-            className="w-full rounded-xl border border-border bg-input px-3 py-2.5 text-sm outline-none focus:border-primary"
-          >
-            <option value="">Uncategorised</option>
-            {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+            onChange={(v) => { setCategoryId(v); setSubcategoryId(""); }}
+            options={[{ id: "", name: "Uncategorised" }, ...cats.map((c) => ({ id: c.id, name: c.name }))]}
+          />
         </Field>
 
-        {filteredSubs.length > 0 && (
+        {categoryId && (
           <Field label="Subcategory">
-            <select
+            <ChipGroup
               value={subcategoryId}
-              onChange={(e) => setSubcategoryId(e.target.value)}
-              className="w-full rounded-xl border border-border bg-input px-3 py-2.5 text-sm outline-none focus:border-primary"
-            >
-              <option value="">—</option>
-              {filteredSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+              onChange={setSubcategoryId}
+              options={[{ id: "", name: "None" }, ...filteredSubs.map((s) => ({ id: s.id, name: s.name }))]}
+            />
           </Field>
         )}
 
@@ -161,5 +155,37 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="mb-1 block text-xs uppercase tracking-widest text-muted-foreground">{label}</span>
       {children}
     </label>
+  );
+}
+
+function ChipGroup({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { id: string; name: string }[];
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((o) => {
+        const active = value === o.id;
+        return (
+          <button
+            type="button"
+            key={o.id || "__none"}
+            onClick={() => onChange(o.id)}
+            className={`min-h-10 rounded-full border px-3.5 py-2 text-sm font-medium transition ${
+              active
+                ? "border-primary bg-primary text-primary-foreground shadow shadow-primary/30"
+                : "border-border bg-card/60 text-foreground hover:bg-accent"
+            }`}
+          >
+            {o.name}
+          </button>
+        );
+      })}
+    </div>
   );
 }
