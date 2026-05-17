@@ -135,7 +135,7 @@ export default function ExpenseForm({ expenseId }: { expenseId?: string }) {
           </Field>
         </div>
 
-        <Field label="Note (optional)">
+        <Field label="Note:">
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -146,7 +146,7 @@ export default function ExpenseForm({ expenseId }: { expenseId?: string }) {
 
         <button
           disabled={busy}
-          className="w-full rounded-xl bg-primary py-3.5 text-sm font-semibold text-primary-foreground shadow-lg shadow-primary/30 disabled:opacity-50"
+          className="w-full rounded-xl bg-primary py-3.5 text-sm text-primary-foreground shadow-lg shadow-primary/30 disabled:opacity-50 font-bold"
         >
           {busy ? "Saving…" : editing ? "Update expense" : "Save expense"}
         </button>
