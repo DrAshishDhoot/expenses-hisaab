@@ -1,9 +1,15 @@
-import { supabase } from "@/integrations/supabase/client";
-import { db, getMeta, setMeta, type LocalCategory, type LocalSubcategory, type LocalExpense, type OutboxItem } from "./local-db";
+// Local-first store with Google Drive as the only cloud backend.
+// All mutations write to IndexedDB immediately, then debounce-push a full
+// snapshot JSON to the user's Drive appDataFolder.
+import { db, type LocalCategory, type LocalSubcategory, type LocalExpense } from "./local-db";
 import { getDeviceId } from "./device";
-
-type TableName = "categories" | "subcategories" | "expenses";
-const TABLES: TableName[] = ["categories", "subcategories", "expenses"];
+import {
+  buildLocalSnapshot,
+  isDriveConnected,
+  mergeSnapshotIntoLocal,
+  pullSnapshot,
+  pushSnapshot,
+} from "./drive";
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -15,110 +21,49 @@ function notify() {
   listeners.forEach((l) => l());
 }
 
-let _state: "idle" | "syncing" | "error" | "offline" = "idle";
+type SyncState = "idle" | "syncing" | "error" | "offline" | "disconnected";
+let _state: SyncState = "idle";
 export function syncState() {
   return _state;
 }
-function setState(s: typeof _state) {
+function setState(s: SyncState) {
   _state = s;
   notify();
 }
 
-let pushing = false;
-
-export async function enqueue(item: Omit<OutboxItem, "id" | "created_at" | "attempts">) {
-  const d = await db();
-  const entry: OutboxItem = {
-    id: crypto.randomUUID(),
-    created_at: new Date().toISOString(),
-    attempts: 0,
-    ...item,
-  };
-  await d.add("outbox", entry);
-  notify();
-  void pushOutbox();
+let pendingPush = 0;
+export async function pendingCount(): Promise<number> {
+  return pendingPush;
 }
 
-export async function pushOutbox() {
-  if (pushing) return;
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
+let activeUser: string | null = null;
+
+function schedulePush(userId: string) {
+  activeUser = userId;
+  pendingPush += 1;
+  notify();
+  if (pushTimer) clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => void doPush(userId), 1500);
+}
+
+async function doPush(userId: string) {
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     setState("offline");
     return;
   }
-  pushing = true;
-  try {
-    const d = await db();
-    const items = (await d.getAll("outbox")) as OutboxItem[];
-    if (items.length === 0) {
-      setState("idle");
-      return;
-    }
-    setState("syncing");
-    items.sort((a, b) => a.created_at.localeCompare(b.created_at));
-    for (const item of items) {
-      try {
-        if (item.op === "upsert") {
-          const { error } = await supabase.from(item.table).upsert(item.payload as never);
-          if (error) throw error;
-        } else if (item.op === "delete") {
-          const { id } = item.payload as { id: string };
-          const { error } = await supabase
-            .from(item.table)
-            .update({ deleted_at: new Date().toISOString() } as never)
-            .eq("id", id);
-          if (error) throw error;
-        }
-        await d.delete("outbox", item.id);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        item.attempts += 1;
-        item.last_error = msg;
-        await d.put("outbox", item);
-        setState("error");
-        console.error("[sync] push failed", item.table, msg);
-        return;
-      }
-    }
-    setState("idle");
-  } finally {
-    pushing = false;
-    notify();
-  }
-}
-
-export async function pullAll(userId: string) {
-  if (typeof navigator !== "undefined" && !navigator.onLine) {
-    setState("offline");
+  if (!isDriveConnected()) {
+    setState("disconnected");
     return;
   }
   setState("syncing");
   try {
-    const d = await db();
-    for (const table of TABLES) {
-      const lastKey = `last_pulled_${table}`;
-      const last = (await getMeta(lastKey)) ?? "1970-01-01T00:00:00Z";
-      const { data, error } = await supabase
-        .from(table)
-        .select("*")
-        .eq("user_id", userId)
-        .gt("updated_at", last)
-        .order("updated_at", { ascending: true })
-        .limit(1000);
-      if (error) throw error;
-      if (data && data.length) {
-        const tx = d.transaction(table, "readwrite");
-        let max = last;
-        for (const row of data as Array<{ updated_at: string }>) {
-          await tx.store.put(row);
-          if (row.updated_at > max) max = row.updated_at;
-        }
-        await tx.done;
-        await setMeta(lastKey, max);
-      }
-    }
+    const snap = await buildLocalSnapshot(userId);
+    await pushSnapshot(snap);
+    pendingPush = 0;
     setState("idle");
-  } catch (e: unknown) {
-    console.error("[sync] pull failed", e);
+  } catch (e) {
+    console.error("[drive push] failed", e);
     setState("error");
   } finally {
     notify();
@@ -126,8 +71,24 @@ export async function pullAll(userId: string) {
 }
 
 export async function fullSync(userId: string) {
-  await pushOutbox();
-  await pullAll(userId);
+  if (!isDriveConnected()) {
+    setState("disconnected");
+    return;
+  }
+  setState("syncing");
+  try {
+    const remote = await pullSnapshot();
+    if (remote) await mergeSnapshotIntoLocal(remote);
+    const snap = await buildLocalSnapshot(userId);
+    await pushSnapshot(snap);
+    pendingPush = 0;
+    setState("idle");
+  } catch (e) {
+    console.error("[drive sync] failed", e);
+    setState("error");
+  } finally {
+    notify();
+  }
 }
 
 // ---------------- CRUD helpers ----------------
@@ -147,7 +108,9 @@ export async function listSubcategories(userId: string): Promise<LocalSubcategor
 export async function listExpenses(userId: string): Promise<LocalExpense[]> {
   const d = await db();
   const all = (await d.getAllFromIndex("expenses", "user_id", userId)) as LocalExpense[];
-  return all.filter((e) => !e.deleted_at).sort((a, b) => b.spent_on.localeCompare(a.spent_on) || b.created_at.localeCompare(a.created_at));
+  return all
+    .filter((e) => !e.deleted_at)
+    .sort((a, b) => b.spent_on.localeCompare(a.spent_on) || b.created_at.localeCompare(a.created_at));
 }
 
 export async function saveCategory(userId: string, input: { id?: string; name: string }): Promise<LocalCategory> {
@@ -164,7 +127,7 @@ export async function saveCategory(userId: string, input: { id?: string; name: s
     deleted_at: null,
   };
   await d.put("categories", row);
-  await enqueue({ table: "categories", op: "upsert", payload: row });
+  schedulePush(userId);
   return row;
 }
 
@@ -175,7 +138,7 @@ export async function deleteCategory(id: string) {
   row.deleted_at = new Date().toISOString();
   row.updated_at = row.deleted_at;
   await d.put("categories", row);
-  await enqueue({ table: "categories", op: "delete", payload: { id } });
+  schedulePush(row.user_id);
 }
 
 export async function saveSubcategory(userId: string, input: { id?: string; category_id: string; name: string }): Promise<LocalSubcategory> {
@@ -193,7 +156,7 @@ export async function saveSubcategory(userId: string, input: { id?: string; cate
     deleted_at: null,
   };
   await d.put("subcategories", row);
-  await enqueue({ table: "subcategories", op: "upsert", payload: row });
+  schedulePush(userId);
   return row;
 }
 
@@ -204,7 +167,7 @@ export async function deleteSubcategory(id: string) {
   row.deleted_at = new Date().toISOString();
   row.updated_at = row.deleted_at;
   await d.put("subcategories", row);
-  await enqueue({ table: "subcategories", op: "delete", payload: { id } });
+  schedulePush(row.user_id);
 }
 
 export async function saveExpense(
@@ -237,7 +200,7 @@ export async function saveExpense(
     deleted_at: null,
   };
   await d.put("expenses", row);
-  await enqueue({ table: "expenses", op: "upsert", payload: row });
+  schedulePush(userId);
   return row;
 }
 
@@ -248,16 +211,33 @@ export async function deleteExpense(id: string) {
   row.deleted_at = new Date().toISOString();
   row.updated_at = row.deleted_at;
   await d.put("expenses", row);
-  await enqueue({ table: "expenses", op: "delete", payload: { id } });
+  schedulePush(row.user_id);
 }
 
-export async function pendingCount(): Promise<number> {
+// Delete expenses spent within a date range (inclusive). Soft-delete + sync.
+export async function deleteExpensesInRange(userId: string, fromISO: string, toISO: string): Promise<number> {
   const d = await db();
-  return d.count("outbox");
+  const all = (await d.getAllFromIndex("expenses", "user_id", userId)) as LocalExpense[];
+  const now = new Date().toISOString();
+  let n = 0;
+  const tx = d.transaction("expenses", "readwrite");
+  for (const e of all) {
+    if (e.deleted_at) continue;
+    if (e.spent_on >= fromISO && e.spent_on <= toISO) {
+      e.deleted_at = now;
+      e.updated_at = now;
+      await tx.store.put(e);
+      n += 1;
+    }
+  }
+  await tx.done;
+  if (n > 0) schedulePush(userId);
+  return n;
 }
 
 export function startSyncEngine(userId: string) {
   if (typeof window === "undefined") return () => {};
+  activeUser = userId;
   const onOnline = () => {
     setState("idle");
     void fullSync(userId);
@@ -274,4 +254,8 @@ export function startSyncEngine(userId: string) {
     window.removeEventListener("offline", onOffline);
     window.clearInterval(interval);
   };
+}
+
+export function getActiveUser() {
+  return activeUser;
 }
