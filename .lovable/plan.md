@@ -1,83 +1,39 @@
-# Hisaab — Expense Manager
+# Plan
 
-A production-grade, offline-first expense tracking web app (installable as a PWA on Android & desktop). Native Android (Kotlin) is out of scope for this build — Lovable targets web. The PWA delivers the same experience: home-screen install, offline use, background sync.
+## 1. Revert backend from Google Drive to Supabase
 
-## Scope of this build (Phase 1)
+Restore the previous local-first + Supabase sync model. Google sign-in stays as a login option, but data lives in Supabase Postgres (tables already exist with RLS).
 
-A polished, working web app with:
-- Email/password authentication (Lovable Cloud)
-- Add / edit / delete expenses with category + subcategory, amount (₹ INR), date, optional notes
-- Category & subcategory management (alphabetical)
-- Dashboard: month total, recent expenses, per-category breakdown
-- Monthly filter + search
-- Offline-first: IndexedDB local store, instant save, sync queue, auto-sync on reconnect, sync-status indicator
-- Excel (.xlsx) export — monthly and category-wise
-- PWA: installable, offline shell
+- **`src/lib/sync.ts`** — rewrite to push/pull per-row against Supabase tables (`categories`, `subcategories`, `expenses`) using the outbox pattern already supported by `local-db.ts`. Mutations enqueue to outbox + write IndexedDB; sync engine drains outbox via `supabase.from(...).upsert()` / soft-delete updates, and pulls server rows newer than last sync cursor.
+- **`src/lib/auth.tsx`** — remove `setDriveToken` / `captureProviderToken` logic. Keep `startSyncEngine(userId)` call.
+- **`src/lib/drive.ts`** — delete file.
+- **`src/components/SettingsPage.tsx`** — remove "Reconnect Google Drive" section and related UI; keep password update, delete-by-date-range, and sign-out.
+- **`src/routes/login.tsx` / `signup.tsx`** — keep both email/password and Google OAuth buttons (Google now only authenticates; no Drive scope). Drop the `drive.appdata` scope and `access_type/prompt` params.
+- **`src/components/AppShell.tsx`** — remove any "disconnected" Drive banner; keep online/offline + syncing indicators.
+- Existing Supabase migrations and RLS policies remain unchanged.
 
-## Design
+Note: any data currently only in a user's Drive snapshot will not auto-migrate back. New writes go to Supabase from this point forward.
 
-- Dark grey background (near-black `#0E0F10`), elevated card surface, neon green accent (`#00FF85`)
-- Distinctive type pairing: Space Grotesk (display) + Inter (body)
-- Minimal, calm, low-clutter; thumb-friendly bottom action bar on mobile; FAB for add
-- All colors via semantic tokens in `src/styles.css` (oklch)
+## 2. Background colour → Ash grey
 
-## Screens / routes
+Update `src/styles.css` to shift `--background` (and related dark surfaces) from near-black to Ash `#454545`, with `--card`, `--muted`, `--accent`, `--border`, `--input` re-tuned one step lighter/darker around it so contrast stays readable. Neon green primary stays unchanged.
 
-```
-/login              email + password
-/signup
-/                   dashboard (month total, recent, breakdown)
-/add                add expense (modal/sheet on mobile)
-/expenses           list + filters + search
-/categories         manage categories & subcategories
-/settings           export, sign out, sync status
+```text
+--background  oklch(0.42 0 0)   ≈ #454545  (Ash)
+--card        oklch(0.46 0 0)   slightly lighter panels
+--popover     oklch(0.46 0 0)
+--secondary   oklch(0.50 0 0)
+--muted       oklch(0.48 0 0)
+--accent      oklch(0.54 0 0)
+--border      oklch(0.56 0 0)
+--input       oklch(0.50 0 0)
+--foreground  oklch(0.98 0 0)   keep near-white text
 ```
 
-## Data model (Lovable Cloud / Postgres)
+The ambient neon glow in `body::before` stays but will read softer against the lighter background.
 
-- `profiles(user_id, display_name, created_at)`
-- `categories(id, user_id, name, created_at, updated_at, deleted_at)`
-- `subcategories(id, user_id, category_id, name, created_at, updated_at, deleted_at)`
-- `expenses(id, user_id, amount_paise bigint, category_id, subcategory_id, description, spent_on date, created_at, updated_at, deleted_at, device_id, client_updated_at)`
+## Files touched
 
-RLS: every table restricted to `auth.uid() = user_id`. Soft-delete via `deleted_at`. Amounts stored as integer paise to avoid float drift.
-
-## Offline-first sync engine
-
-- Local store: IndexedDB (via `idb`) mirrors server tables + `outbox` queue of mutations
-- Every mutation: write locally → enqueue → UI updates instantly → background worker pushes to Cloud
-- Pull: on app start + on reconnect + every N minutes; uses `updated_at > last_pulled_at` per table
-- Conflict rule: last-write-wins by `client_updated_at`; deletes are soft (tombstones) and only purged after server confirms
-- Per-row `sync_status` derived (synced / pending / error); shown as small dot on each expense and in the header
-- `online`/`offline` detected via `navigator.onLine` + ping; queue auto-flushes on reconnect
-
-## Excel export
-
-- `xlsx` library; generates a workbook with one sheet per month or per category, totals row, formatted INR
-- Triggered from Settings → "Export"; downloads `hisaab-YYYY-MM.xlsx`
-
-## Tech
-
-- TanStack Start + React 19 + Vite (current template)
-- Tailwind v4 + shadcn/ui
-- Lovable Cloud (Postgres + Auth) — no external accounts
-- `idb` for IndexedDB, `xlsx` for export, `dayjs` for dates
-- PWA via vite-plugin-pwa (manifest + service worker for offline shell)
-
-## What's deferred (call out before building)
-
-- Native Android (Kotlin/Compose) app — not buildable in Lovable. The PWA is installable on Android and covers the requirement; a separate Android project would be needed for Play Store.
-- Google sign-in — can be added once email/password works.
-- Background Sync API beyond what the SW provides — covered by reconnect-triggered flush.
-
-## Build order
-
-1. Enable Lovable Cloud + auth pages
-2. Schema + RLS
-3. IndexedDB store + outbox + sync engine
-4. Categories CRUD
-5. Expenses CRUD + dashboard
-6. Filters, search, monthly view
-7. Excel export
-8. PWA manifest + SW
-9. Polish (theme, animations, empty states)
+- rewrite: `src/lib/sync.ts`
+- edit: `src/lib/auth.tsx`, `src/components/SettingsPage.tsx`, `src/components/AppShell.tsx`, `src/routes/login.tsx`, `src/routes/signup.tsx`, `src/styles.css`
+- delete: `src/lib/drive.ts`
