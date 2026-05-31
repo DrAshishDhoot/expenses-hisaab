@@ -1,15 +1,17 @@
-// Local-first store with Google Drive as the only cloud backend.
-// All mutations write to IndexedDB immediately, then debounce-push a full
-// snapshot JSON to the user's Drive appDataFolder.
-import { db, type LocalCategory, type LocalSubcategory, type LocalExpense } from "./local-db";
-import { getDeviceId } from "./device";
+// Local-first store with Supabase as the cloud backend.
+// Mutations write to IndexedDB immediately and enqueue an outbox item;
+// the sync engine drains the outbox to Supabase and pulls remote changes.
+import { supabase } from "@/integrations/supabase/client";
 import {
-  buildLocalSnapshot,
-  isDriveConnected,
-  mergeSnapshotIntoLocal,
-  pullSnapshot,
-  pushSnapshot,
-} from "./drive";
+  db,
+  getMeta,
+  setMeta,
+  type LocalCategory,
+  type LocalSubcategory,
+  type LocalExpense,
+  type OutboxItem,
+} from "./local-db";
+import { getDeviceId } from "./device";
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -21,7 +23,7 @@ function notify() {
   listeners.forEach((l) => l());
 }
 
-type SyncState = "idle" | "syncing" | "error" | "offline" | "disconnected";
+type SyncState = "idle" | "syncing" | "error" | "offline";
 let _state: SyncState = "idle";
 export function syncState() {
   return _state;
@@ -31,60 +33,112 @@ function setState(s: SyncState) {
   notify();
 }
 
-let pendingPush = 0;
 export async function pendingCount(): Promise<number> {
-  return pendingPush;
+  const d = await db();
+  return (await d.count("outbox")) as number;
 }
 
-let pushTimer: ReturnType<typeof setTimeout> | null = null;
 let activeUser: string | null = null;
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
 
-function schedulePush(userId: string) {
-  activeUser = userId;
-  pendingPush += 1;
+async function enqueue(item: Omit<OutboxItem, "id" | "created_at" | "attempts">) {
+  const d = await db();
+  await d.put("outbox", {
+    id: crypto.randomUUID(),
+    created_at: new Date().toISOString(),
+    attempts: 0,
+    ...item,
+  });
   notify();
-  if (pushTimer) clearTimeout(pushTimer);
-  pushTimer = setTimeout(() => void doPush(userId), 1500);
+  schedulePush();
 }
 
-async function doPush(userId: string) {
+function schedulePush() {
+  if (pushTimer) clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => void drainOutbox(), 800);
+}
+
+async function drainOutbox() {
   if (typeof navigator !== "undefined" && !navigator.onLine) {
     setState("offline");
     return;
   }
-  if (!isDriveConnected()) {
-    setState("disconnected");
+  const d = await db();
+  const items = (await d.getAll("outbox")) as OutboxItem[];
+  if (items.length === 0) {
+    setState("idle");
     return;
   }
   setState("syncing");
-  try {
-    const snap = await buildLocalSnapshot(userId);
-    await pushSnapshot(snap);
-    pendingPush = 0;
-    setState("idle");
-  } catch (e) {
-    console.error("[drive push] failed", e);
-    setState("error");
-  } finally {
-    notify();
+  for (const it of items) {
+    try {
+      if (it.op === "upsert") {
+        const { error } = await supabase.from(it.table).upsert(it.payload as never);
+        if (error) throw error;
+      } else if (it.op === "delete") {
+        const payload = it.payload as { id: string; deleted_at: string; updated_at: string };
+        const { error } = await supabase
+          .from(it.table)
+          .update({ deleted_at: payload.deleted_at, updated_at: payload.updated_at })
+          .eq("id", payload.id);
+        if (error) throw error;
+      }
+      await d.delete("outbox", it.id);
+    } catch (e) {
+      console.error("[sync] outbox item failed", it, e);
+      it.attempts += 1;
+      it.last_error = e instanceof Error ? e.message : String(e);
+      await d.put("outbox", it);
+      setState("error");
+      notify();
+      return;
+    }
   }
+  notify();
+  setState("idle");
+}
+
+async function pullRemote(userId: string) {
+  const cursor = (await getMeta("sync.cursor")) ?? "1970-01-01T00:00:00.000Z";
+  const tables: Array<"categories" | "subcategories" | "expenses"> = [
+    "categories",
+    "subcategories",
+    "expenses",
+  ];
+  let newCursor = cursor;
+  const d = await db();
+  for (const t of tables) {
+    const { data, error } = await supabase
+      .from(t)
+      .select("*")
+      .eq("user_id", userId)
+      .gt("updated_at", cursor)
+      .order("updated_at", { ascending: true })
+      .limit(1000);
+    if (error) throw error;
+    if (!data || data.length === 0) continue;
+    const tx = d.transaction(t, "readwrite");
+    for (const row of data as Array<{ updated_at: string }>) {
+      await tx.store.put(row);
+      if (row.updated_at > newCursor) newCursor = row.updated_at;
+    }
+    await tx.done;
+  }
+  if (newCursor !== cursor) await setMeta("sync.cursor", newCursor);
 }
 
 export async function fullSync(userId: string) {
-  if (!isDriveConnected()) {
-    setState("disconnected");
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    setState("offline");
     return;
   }
   setState("syncing");
   try {
-    const remote = await pullSnapshot();
-    if (remote) await mergeSnapshotIntoLocal(remote);
-    const snap = await buildLocalSnapshot(userId);
-    await pushSnapshot(snap);
-    pendingPush = 0;
+    await drainOutbox();
+    await pullRemote(userId);
     setState("idle");
   } catch (e) {
-    console.error("[drive sync] failed", e);
+    console.error("[sync] full sync failed", e);
     setState("error");
   } finally {
     notify();
@@ -127,7 +181,7 @@ export async function saveCategory(userId: string, input: { id?: string; name: s
     deleted_at: null,
   };
   await d.put("categories", row);
-  schedulePush(userId);
+  await enqueue({ table: "categories", op: "upsert", payload: row as unknown as Record<string, unknown> });
   return row;
 }
 
@@ -138,7 +192,11 @@ export async function deleteCategory(id: string) {
   row.deleted_at = new Date().toISOString();
   row.updated_at = row.deleted_at;
   await d.put("categories", row);
-  schedulePush(row.user_id);
+  await enqueue({
+    table: "categories",
+    op: "delete",
+    payload: { id: row.id, deleted_at: row.deleted_at, updated_at: row.updated_at },
+  });
 }
 
 export async function saveSubcategory(userId: string, input: { id?: string; category_id: string; name: string }): Promise<LocalSubcategory> {
@@ -156,7 +214,7 @@ export async function saveSubcategory(userId: string, input: { id?: string; cate
     deleted_at: null,
   };
   await d.put("subcategories", row);
-  schedulePush(userId);
+  await enqueue({ table: "subcategories", op: "upsert", payload: row as unknown as Record<string, unknown> });
   return row;
 }
 
@@ -167,7 +225,11 @@ export async function deleteSubcategory(id: string) {
   row.deleted_at = new Date().toISOString();
   row.updated_at = row.deleted_at;
   await d.put("subcategories", row);
-  schedulePush(row.user_id);
+  await enqueue({
+    table: "subcategories",
+    op: "delete",
+    payload: { id: row.id, deleted_at: row.deleted_at, updated_at: row.updated_at },
+  });
 }
 
 export async function saveExpense(
@@ -200,7 +262,7 @@ export async function saveExpense(
     deleted_at: null,
   };
   await d.put("expenses", row);
-  schedulePush(userId);
+  await enqueue({ table: "expenses", op: "upsert", payload: row as unknown as Record<string, unknown> });
   return row;
 }
 
@@ -211,7 +273,11 @@ export async function deleteExpense(id: string) {
   row.deleted_at = new Date().toISOString();
   row.updated_at = row.deleted_at;
   await d.put("expenses", row);
-  schedulePush(row.user_id);
+  await enqueue({
+    table: "expenses",
+    op: "delete",
+    payload: { id: row.id, deleted_at: row.deleted_at, updated_at: row.updated_at },
+  });
 }
 
 // Delete expenses spent within a date range (inclusive). Soft-delete + sync.
@@ -219,20 +285,22 @@ export async function deleteExpensesInRange(userId: string, fromISO: string, toI
   const d = await db();
   const all = (await d.getAllFromIndex("expenses", "user_id", userId)) as LocalExpense[];
   const now = new Date().toISOString();
-  let n = 0;
+  const toDelete = all.filter((e) => !e.deleted_at && e.spent_on >= fromISO && e.spent_on <= toISO);
   const tx = d.transaction("expenses", "readwrite");
-  for (const e of all) {
-    if (e.deleted_at) continue;
-    if (e.spent_on >= fromISO && e.spent_on <= toISO) {
-      e.deleted_at = now;
-      e.updated_at = now;
-      await tx.store.put(e);
-      n += 1;
-    }
+  for (const e of toDelete) {
+    e.deleted_at = now;
+    e.updated_at = now;
+    await tx.store.put(e);
   }
   await tx.done;
-  if (n > 0) schedulePush(userId);
-  return n;
+  for (const e of toDelete) {
+    await enqueue({
+      table: "expenses",
+      op: "delete",
+      payload: { id: e.id, deleted_at: e.deleted_at!, updated_at: e.updated_at },
+    });
+  }
+  return toDelete.length;
 }
 
 export function startSyncEngine(userId: string) {

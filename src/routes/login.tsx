@@ -85,11 +85,7 @@ export function GoogleButton({ label }: { label: string }) {
   const onClick = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: {
-        scopes: "https://www.googleapis.com/auth/drive.appdata",
-        redirectTo: window.location.origin,
-        queryParams: { access_type: "offline", prompt: "consent" },
-      },
+      options: { redirectTo: window.location.origin },
     });
     if (error) toast.error(error.message);
   };
