@@ -19,6 +19,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "description", content: "Hisaab is a fast, offline-first expense tracker with multi-device sync and Excel export." },
       { property: "og:type", content: "website" },
       { property: "og:site_name", content: "Hisaab" },
+      { property: "og:title", content: "Hisaab — Personal expense tracker" },
+      { name: "twitter:title", content: "Hisaab — Personal expense tracker" },
+      { property: "og:description", content: "Hisaab is a fast, offline-first expense tracker with multi-device sync and Excel export." },
+      { name: "twitter:description", content: "Hisaab is a fast, offline-first expense tracker with multi-device sync and Excel export." },
+      { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/attachments/og-images/80492fb0-a8ad-4823-8f1c-8d38d4c02f2a" },
+      { name: "twitter:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/attachments/og-images/80492fb0-a8ad-4823-8f1c-8d38d4c02f2a" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
