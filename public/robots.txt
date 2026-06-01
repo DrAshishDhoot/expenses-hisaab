@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /add
+Disallow: /edit/
+Disallow: /expenses
+Disallow: /categories
+Disallow: /settings

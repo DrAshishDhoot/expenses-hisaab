@@ -58,10 +58,11 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <section>
+        <h1 className="sr-only">Monthly expense overview</h1>
         <p className="text-xs uppercase tracking-widest text-muted-foreground">{dayjs().format("MMMM YYYY")}</p>
         <div className="mt-1 flex items-end justify-between gap-4">
           <div>
-            <h1 className="font-display text-4xl font-semibold tabular-nums">{formatINR(total)}</h1>
+            <p className="font-display text-4xl font-semibold tabular-nums" aria-label={`Total spent this month ${formatINR(total)}`}>{formatINR(total)}</p>
             <p className="mt-1 text-sm text-muted-foreground">
               Today <span className="text-foreground tabular-nums">{formatINR(todayTotal)}</span>
             </p>

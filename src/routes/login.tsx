@@ -6,7 +6,16 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
   component: LoginPage,
-  head: () => ({ meta: [{ title: "Sign in — Hisaab" }] }),
+  head: () => ({
+    meta: [
+      { title: "Sign in — Hisaab" },
+      { name: "description", content: "Sign in to your Hisaab account to access your synced expenses, categories and monthly spending insights." },
+      { property: "og:title", content: "Sign in — Hisaab" },
+      { property: "og:description", content: "Sign in to your Hisaab account to access your synced expenses, categories and monthly spending insights." },
+      { property: "og:url", content: "/login" },
+    ],
+    links: [{ rel: "canonical", href: "/login" }],
+  }),
 });
 
 function LoginPage() {

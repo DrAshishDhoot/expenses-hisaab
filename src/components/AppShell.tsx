@@ -101,9 +101,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 <Link
                   key={t.to}
                   to={t.to}
+                  aria-label="Add expense"
                   className="-mt-6 grid h-14 w-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/30 ring-4 ring-background"
                 >
-                  <Icon className="h-6 w-6" />
+                  <Icon className="h-6 w-6" aria-hidden="true" />
                 </Link>
               );
             }
