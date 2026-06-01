@@ -108,11 +108,11 @@ export default function ExpensesList() {
               </div>
               <div className="ml-3 flex shrink-0 items-center gap-2">
                 <span className="font-display text-base font-semibold tabular-nums">{formatINR(e.amount_paise)}</span>
-                <Link to="/edit/$id" params={{ id: e.id }} className="rounded-lg p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground">
-                  <Pencil className="h-4 w-4" />
+                <Link to="/edit/$id" params={{ id: e.id }} aria-label="Edit expense" className="rounded-lg p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+                  <Pencil className="h-4 w-4" aria-hidden="true" />
                 </Link>
-                <button onClick={() => onDelete(e.id)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive">
-                  <Trash2 className="h-4 w-4" />
+                <button onClick={() => onDelete(e.id)} aria-label="Delete expense" className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive">
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>
             </li>

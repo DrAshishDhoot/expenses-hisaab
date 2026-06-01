@@ -86,9 +86,10 @@ export default function CategoriesManager() {
                 </button>
                 <button
                   onClick={async () => { if (confirm(`Delete "${c.name}"?`)) { await deleteCategory(c.id); toast.success("Deleted"); } }}
+                  aria-label={`Delete category ${c.name}`}
                   className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>
 
@@ -99,9 +100,10 @@ export default function CategoriesManager() {
                       <span>{s.name}</span>
                       <button
                         onClick={async () => { await deleteSubcategory(s.id); toast.success("Removed"); }}
+                        aria-label={`Delete subcategory ${s.name}`}
                         className="text-muted-foreground hover:text-destructive"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                       </button>
                     </div>
                   ))}

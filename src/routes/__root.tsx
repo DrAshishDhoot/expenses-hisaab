@@ -17,6 +17,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "theme-color", content: "#1a1c1d" },
       { title: "Hisaab — Personal expense tracker" },
       { name: "description", content: "Hisaab is a fast, offline-first expense tracker with multi-device sync and Excel export." },
+      { property: "og:type", content: "website" },
+      { property: "og:site_name", content: "Hisaab" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
