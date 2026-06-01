@@ -1,0 +1,9 @@
+# Hisaab
+
+> Hisaab is a fast, offline-first personal expense tracker with multi-device sync and Excel export.
+
+## Pages
+
+- [Home](/): Overview of Hisaab and monthly spending dashboard for signed-in users.
+- [Sign in](/login): Sign in to an existing Hisaab account.
+- [Sign up](/signup): Create a new Hisaab account.

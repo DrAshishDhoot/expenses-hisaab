@@ -7,7 +7,16 @@ import { AuthShell, Input, GoogleButton } from "./login";
 
 export const Route = createFileRoute("/signup")({
   component: SignupPage,
-  head: () => ({ meta: [{ title: "Sign up — Hisaab" }] }),
+  head: () => ({
+    meta: [
+      { title: "Sign up — Hisaab" },
+      { name: "description", content: "Create a free Hisaab account and start tracking your daily expenses in seconds with offline support and multi-device sync." },
+      { property: "og:title", content: "Sign up — Hisaab" },
+      { property: "og:description", content: "Create a free Hisaab account and start tracking your daily expenses in seconds with offline support and multi-device sync." },
+      { property: "og:url", content: "/signup" },
+    ],
+    links: [{ rel: "canonical", href: "/signup" }],
+  }),
 });
 
 function SignupPage() {
