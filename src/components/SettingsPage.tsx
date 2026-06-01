@@ -64,7 +64,7 @@ export default function SettingsPage() {
       listExpenses(user.id), listCategories(user.id), listSubcategories(user.id),
     ]);
     if (e.length === 0) { toast.error("Nothing to export yet"); return; }
-    exportMonthly(e, c, s);
+    await exportMonthly(e, c, s);
     toast.success("Exported");
   };
 
