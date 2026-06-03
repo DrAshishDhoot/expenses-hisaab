@@ -1,48 +1,57 @@
-## Goal
 
-Make Hisaab installable on Android (Add to Home Screen / "Install app") so it opens in a standalone window like a native app.
+## Good news: data offline already works
 
-## Approach
+Your app is already local-first. Every add/edit/delete writes to IndexedDB immediately and queues an "outbox" item. When the phone comes back online, a sync engine drains the queue to the cloud and pulls remote changes — exactly the Keep model.
 
-For installability alone, Android only needs a valid **web app manifest** linked from the HTML plus at least one 192×192 and one 512×512 PNG icon. A service worker is **not** required for the install prompt on modern Chrome/Android, and adding one inside Lovable's preview iframe causes serious issues: stale caches, broken hot reload, and intercepted navigation (per Lovable's PWA guidance).
+Files doing this today:
+- `src/lib/local-db.ts` — IndexedDB stores for categories, subcategories, expenses, outbox.
+- `src/lib/sync.ts` — outbox drain, pull-with-cursor, `online`/`offline` listeners, 60s background sync, manual "tap to sync" button in the header.
 
-I therefore recommend the **manifest-only** path and will not add the uploaded `pwabuilder-sw.js`. The uploaded service worker also has problems that would break the app if shipped as-is:
-- It references a non-existent `ToDo-replace-this-name.html` offline page.
-- It uses StaleWhileRevalidate on `/*`, which would serve outdated builds.
-- It pulls Workbox from a CDN at runtime.
+So the **data layer** needs no change. What's missing is the **app shell**: if the phone has no network, opening the installed app today still tries to fetch `index.html` + JS from the server and fails. We need to cache the shell so it boots offline.
 
-The uploaded `manifest.json` also needs fixes before it's valid for install:
-- Icons must include 192×192 and 512×512 PNGs; the single 1344×768 icon will not satisfy Android's install criteria and is not square.
-- `id` should be a URL path like `/`, not `"Dhoot"`.
+## What I'll add
 
-## What I'll do
+Use `vite-plugin-pwa` (the Lovable-approved path) to generate a service worker that caches the built app shell and serves it offline. The worker is **disabled in the Lovable editor preview** and only activates on the published site, so it won't break hot reload.
 
-1. **Add `public/manifest.webmanifest`** based on your file, corrected:
-   - `name`: "Expenses Hisaab", `short_name`: "Hisaab"
-   - `start_url`: "/", `scope`: "/", `id`: "/"
-   - `display`: "standalone", `orientation`: "any"
-   - `theme_color`: "#1a1c1d", `background_color`: "#1a1c1d" (matches dark app shell — white flashes on launch otherwise)
-   - `description`: from your file
-   - `icons`: generate proper 192×192, 512×512, and 512×512 maskable PNG icons into `public/icons/` (Hisaab mark on the dark theme color) and reference them
+### 1. Install + configure plugin
+- `bun add -D vite-plugin-pwa`
+- Update `vite.config.ts` to register VitePWA with:
+  - `registerType: "autoUpdate"`
+  - `injectRegister: null` (we register from our own guarded wrapper)
+  - `devOptions: { enabled: false }`
+  - `workbox`:
+    - `navigateFallback: "/index.html"` with `NetworkFirst` for HTML navigations
+    - `CacheFirst` for same-origin hashed JS/CSS/font/image assets
+    - exclude `/~oauth` and `/api/` from navigation fallback
 
-2. **Link the manifest and add iOS install metadata** in `src/routes/__root.tsx` head():
-   - `<link rel="manifest" href="/manifest.webmanifest">`
-   - `<link rel="apple-touch-icon" href="/icons/icon-192.png">`
-   - `<meta name="apple-mobile-web-app-capable" content="yes">`
-   - `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">`
-   - `<meta name="apple-mobile-web-app-title" content="Hisaab">`
-   - Keep existing `theme-color` meta.
+### 2. Guarded registration wrapper
+- New file `src/lib/register-sw.ts` that refuses to register when any of these are true:
+  - not `import.meta.env.PROD`
+  - inside an iframe
+  - hostname starts with `id-preview--` or `preview--`
+  - hostname ends with `.lovableproject.com`, `.lovableproject-dev.com`, or `.beta.lovable.dev`
+  - URL has `?sw=off` (kill switch)
+- In any refused context, it unregisters any existing `/sw.js` so a stale worker can't keep the editor preview broken.
+- Called once from `src/start.ts`.
 
-3. **Do NOT add a service worker.** I'll note that offline caching is out of scope here; the app remains installable and runs online.
+### 3. Tiny UX polish (optional, ~10 lines)
+- When the SW emits `controllerchange` / "new content available", show a small toast: "Update available — refresh to apply." Uses existing `sonner` toaster, no new deps.
 
-## What you'll need to do
+## What I'm NOT changing
+- `local-db.ts`, `sync.ts`, outbox logic, conflict handling, UI — all kept as-is.
+- Manifest, icons, root head tags — already done in the previous step.
+- No hand-written `public/sw.js`. No Workbox CDN at runtime. No cache-busting reload loops.
 
-- Click **Publish / Update** after the change — install prompts only work on the published HTTPS URL (https://expenses-hisaab.lovable.app), not inside the editor preview iframe.
-- On Android Chrome, open the published URL → menu → **Install app** / **Add to Home screen**.
+## How it'll behave after publish
 
-## Out of scope
+1. User installs the PWA from `expenses-hisaab.lovable.app` (Chrome → menu → Install app).
+2. First launch online: SW installs and caches the app shell.
+3. Phone goes offline → user opens the app → shell loads from cache → IndexedDB serves data → adds/edits go into the outbox.
+4. Phone comes back online → `online` event fires → outbox drains → remote pull merges other devices' changes. Sync badge in the header reflects state (Syncing / Synced / Offline / N pending).
 
-- Offline support / service worker (rejected for preview-stability reasons above; can be added later if you really need offline, with a Lovable-safe registration guard).
-- Wrapping as a true APK via Bubblewrap/TWA — that's a separate packaging step done outside Lovable.
+## Caveats I'll tell the user
+- Offline only works on the **published HTTPS URL**, not in the editor preview iframe (by design — the guard prevents the SW from registering there).
+- iOS requires "Add to Home Screen" from Safari; install prompts behave differently than Android.
+- Background sync (syncing while the app is closed) is not part of this — the queue drains as soon as the user opens the app online again, which matches Keep's actual behavior on most phones.
 
-Confirm and I'll implement.
+If that all sounds right, approve and I'll implement it.
