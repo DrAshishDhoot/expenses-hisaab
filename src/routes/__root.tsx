@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
@@ -8,6 +9,7 @@ import {
 import { Toaster } from "sonner";
 import appCss from "../styles.css?url";
 import { AuthProvider } from "@/lib/auth";
+import { registerServiceWorker } from "@/lib/register-sw";
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
@@ -62,6 +64,9 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  useEffect(() => {
+    registerServiceWorker();
+  }, []);
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
