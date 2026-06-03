@@ -1,39 +1,48 @@
-# Plan
+## Goal
 
-## 1. Revert backend from Google Drive to Supabase
+Make Hisaab installable on Android (Add to Home Screen / "Install app") so it opens in a standalone window like a native app.
 
-Restore the previous local-first + Supabase sync model. Google sign-in stays as a login option, but data lives in Supabase Postgres (tables already exist with RLS).
+## Approach
 
-- **`src/lib/sync.ts`** — rewrite to push/pull per-row against Supabase tables (`categories`, `subcategories`, `expenses`) using the outbox pattern already supported by `local-db.ts`. Mutations enqueue to outbox + write IndexedDB; sync engine drains outbox via `supabase.from(...).upsert()` / soft-delete updates, and pulls server rows newer than last sync cursor.
-- **`src/lib/auth.tsx`** — remove `setDriveToken` / `captureProviderToken` logic. Keep `startSyncEngine(userId)` call.
-- **`src/lib/drive.ts`** — delete file.
-- **`src/components/SettingsPage.tsx`** — remove "Reconnect Google Drive" section and related UI; keep password update, delete-by-date-range, and sign-out.
-- **`src/routes/login.tsx` / `signup.tsx`** — keep both email/password and Google OAuth buttons (Google now only authenticates; no Drive scope). Drop the `drive.appdata` scope and `access_type/prompt` params.
-- **`src/components/AppShell.tsx`** — remove any "disconnected" Drive banner; keep online/offline + syncing indicators.
-- Existing Supabase migrations and RLS policies remain unchanged.
+For installability alone, Android only needs a valid **web app manifest** linked from the HTML plus at least one 192×192 and one 512×512 PNG icon. A service worker is **not** required for the install prompt on modern Chrome/Android, and adding one inside Lovable's preview iframe causes serious issues: stale caches, broken hot reload, and intercepted navigation (per Lovable's PWA guidance).
 
-Note: any data currently only in a user's Drive snapshot will not auto-migrate back. New writes go to Supabase from this point forward.
+I therefore recommend the **manifest-only** path and will not add the uploaded `pwabuilder-sw.js`. The uploaded service worker also has problems that would break the app if shipped as-is:
+- It references a non-existent `ToDo-replace-this-name.html` offline page.
+- It uses StaleWhileRevalidate on `/*`, which would serve outdated builds.
+- It pulls Workbox from a CDN at runtime.
 
-## 2. Background colour → Ash grey
+The uploaded `manifest.json` also needs fixes before it's valid for install:
+- Icons must include 192×192 and 512×512 PNGs; the single 1344×768 icon will not satisfy Android's install criteria and is not square.
+- `id` should be a URL path like `/`, not `"Dhoot"`.
 
-Update `src/styles.css` to shift `--background` (and related dark surfaces) from near-black to Ash `#454545`, with `--card`, `--muted`, `--accent`, `--border`, `--input` re-tuned one step lighter/darker around it so contrast stays readable. Neon green primary stays unchanged.
+## What I'll do
 
-```text
---background  oklch(0.42 0 0)   ≈ #454545  (Ash)
---card        oklch(0.46 0 0)   slightly lighter panels
---popover     oklch(0.46 0 0)
---secondary   oklch(0.50 0 0)
---muted       oklch(0.48 0 0)
---accent      oklch(0.54 0 0)
---border      oklch(0.56 0 0)
---input       oklch(0.50 0 0)
---foreground  oklch(0.98 0 0)   keep near-white text
-```
+1. **Add `public/manifest.webmanifest`** based on your file, corrected:
+   - `name`: "Expenses Hisaab", `short_name`: "Hisaab"
+   - `start_url`: "/", `scope`: "/", `id`: "/"
+   - `display`: "standalone", `orientation`: "any"
+   - `theme_color`: "#1a1c1d", `background_color`: "#1a1c1d" (matches dark app shell — white flashes on launch otherwise)
+   - `description`: from your file
+   - `icons`: generate proper 192×192, 512×512, and 512×512 maskable PNG icons into `public/icons/` (Hisaab mark on the dark theme color) and reference them
 
-The ambient neon glow in `body::before` stays but will read softer against the lighter background.
+2. **Link the manifest and add iOS install metadata** in `src/routes/__root.tsx` head():
+   - `<link rel="manifest" href="/manifest.webmanifest">`
+   - `<link rel="apple-touch-icon" href="/icons/icon-192.png">`
+   - `<meta name="apple-mobile-web-app-capable" content="yes">`
+   - `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">`
+   - `<meta name="apple-mobile-web-app-title" content="Hisaab">`
+   - Keep existing `theme-color` meta.
 
-## Files touched
+3. **Do NOT add a service worker.** I'll note that offline caching is out of scope here; the app remains installable and runs online.
 
-- rewrite: `src/lib/sync.ts`
-- edit: `src/lib/auth.tsx`, `src/components/SettingsPage.tsx`, `src/components/AppShell.tsx`, `src/routes/login.tsx`, `src/routes/signup.tsx`, `src/styles.css`
-- delete: `src/lib/drive.ts`
+## What you'll need to do
+
+- Click **Publish / Update** after the change — install prompts only work on the published HTTPS URL (https://expenses-hisaab.lovable.app), not inside the editor preview iframe.
+- On Android Chrome, open the published URL → menu → **Install app** / **Add to Home screen**.
+
+## Out of scope
+
+- Offline support / service worker (rejected for preview-stability reasons above; can be added later if you really need offline, with a Lovable-safe registration guard).
+- Wrapping as a true APK via Bubblewrap/TWA — that's a separate packaging step done outside Lovable.
+
+Confirm and I'll implement.
