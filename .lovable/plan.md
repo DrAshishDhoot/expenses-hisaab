@@ -1,41 +1,57 @@
-## What I found
+## Problem
 
-The published manifest is now the correct one and includes valid 192×192 and 512×512 icons. The remaining install issue is likely not the manifest contents.
+When the app is already open and the device goes offline, everything keeps working — JS/CSS/HTML are live in memory and writes queue in IndexedDB.
 
-The bigger problem is the published service worker: it is generated with precache URLs like:
+When the device is offline *before* the app is opened (cold start), the browser asks the service worker for the page URL (`/`, `/expenses`, `/add`, etc.). The current Workbox config:
 
-```text
-/client/assets/...
-/client/icons/...
-/client/manifest.webmanifest
-```
+- Uses `NetworkFirst` for navigations with a 3 s timeout.
+- Has **no `navigateFallback`** (it was removed earlier because `/index.html` is not served by this SSR app).
+- The published HTML is rendered by TanStack Start on Cloudflare and ships with revalidation-friendly cache headers — in practice Workbox's runtime `NetworkFirst` cache for navigations is not reliably populated for these SSR responses, so even URLs the user visited online before don't survive an offline reload.
 
-But those URLs return 404 on the published site. That means the service worker can fail its install step, so Chrome may not treat the app as fully installable. When Chrome only shows **Add to Home screen**, it often means it sees a website shortcut path, not a fully installable PWA path.
+Net effect: **every** offline cold start fails — both never-visited URLs and previously-visited URLs — because there is no guaranteed cached document to hand to the browser.
 
-I also found `/manifest.webmanifest` is served as `application/octet-stream`; Chrome often tolerates this, but the correct type is `application/manifest+json` or `application/json`, so we should fix that too.
+Auth and data are unaffected: Supabase reads the session from `localStorage`, and reads/writes use IndexedDB.
 
-## Plan
+## Fix
 
-1. **Fix Workbox precache URLs**
-   - Update the `VitePWA` config so generated service-worker precache entries are rooted at `/assets/...`, `/icons/...`, and `/manifest.webmanifest` instead of `/client/...`.
-   - Keep the service worker filename as `/sw.js`.
-   - Keep navigation caching as `NetworkFirst` so app updates and online routes are preferred.
+Ship a small self-contained offline shell that is **precached at service-worker install time** (not dependent on runtime caching of SSR responses), and make Workbox serve it for any navigation that can't be fulfilled from the network.
 
-2. **Avoid caching a missing `/index.html` fallback**
-   - Remove or adjust the `navigateFallback: "/index.html"` setting because `/index.html` is not served directly on this published TanStack Start app.
-   - Keep offline app-shell support via the normal navigation route/runtime cache instead of a missing fallback file.
+### 1. `public/offline.html` (new, static)
 
-3. **Serve the manifest with a safer filename/type**
-   - Add a `public/manifest.json` copy with the same content.
-   - Change the head manifest link from `/manifest.webmanifest` to `/manifest.json`.
-   - This usually gets a better JSON content type from hosts and avoids Android Chrome quirks around unknown MIME types.
+A minimal self-contained HTML document:
 
-4. **Keep preview safety**
-   - Keep service-worker registration disabled in Lovable preview/dev/iframes.
-   - Keep published-site registration only.
-   - Keep the `?sw=off` cleanup option.
+- Same `<link rel="manifest">`, theme-color, and icon links as the app head.
+- Inline CSS matching the dark theme (`#1a1c1d` background, light text, Hisaab "₹" mark).
+- Centered message: "You're offline — reconnect to load Hisaab."
+- Inline script that listens for `window.addEventListener('online', …)` and calls `location.reload()` so the real app boots the instant connectivity returns.
+- No imports, no JS bundle dependencies — guaranteed to render on the very first offline cold start.
 
-5. **Post-publish phone reset steps**
-   - After publishing the fix, test only on `https://expenses-hisaab.lovable.app`.
-   - On phones that already visited the old version: Chrome → Settings → Site settings → `expenses-hisaab.lovable.app` → Clear & reset, then reopen.
-   - Wait a few seconds on the first load, pull-to-refresh once, then check Chrome menu. It should show **Install app** instead of only **Add to Home screen** once the corrected service worker installs successfully.
+### 2. `vite.config.ts` — Workbox config
+
+Inside the `workbox` block:
+
+- Add `navigateFallback: "/offline.html"`.
+- Keep the existing `navigateFallbackDenylist` for `/api/` and `/~oauth`.
+- Ensure `offline.html` is **precached** (so it lives in the SW from install). Two options, pick one:
+  - Extend `globPatterns` to include `html` (covers `public/offline.html`), OR
+  - Add `additionalManifestEntries: [{ url: "/offline.html", revision: <build hash> }]`.
+- Keep the navigation `NetworkFirst` runtime route. Workbox uses the fallback only after both network and any runtime cache miss.
+
+### 3. Result
+
+| Scenario | Before | After |
+| --- | --- | --- |
+| Open online, go offline, keep using | Works | Works |
+| Cold start offline on a previously-visited URL | **Fails today** | Offline shell appears, auto-reloads on reconnect |
+| Cold start offline on a never-visited URL | **Fails today** | Offline shell appears, auto-reloads on reconnect |
+
+The fallback covers every offline cold-start case because it's served whenever the network navigation can't be answered, regardless of the URL or whether the user visited it before.
+
+### 4. After publishing
+
+The user should open the published site **once while online** so the new service worker installs and precaches `offline.html`. After that, any airplane-mode cold start will land on the offline shell.
+
+## Out of scope
+
+- Rendering each route's full UI offline (would require shipping a true SPA fallback or precaching every SSR'd page; a single offline shell is the safer minimum fix given the current SSR setup).
+- Auth changes — Supabase session restore already works offline.
