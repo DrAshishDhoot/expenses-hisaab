@@ -22,9 +22,11 @@ export default defineConfig({
         manifest: false,
         devOptions: { enabled: false },
         workbox: {
-          globPatterns: ["**/*.{js,css,ico,png,svg,webmanifest,json,woff,woff2}"],
+          globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest,json,woff,woff2}"],
           modifyURLPrefix: { "client/": "/" },
+          navigateFallback: "/offline.html",
           navigateFallbackDenylist: [/^\/api\//, /^\/~oauth/],
+
           runtimeCaching: [
             {
               urlPattern: ({ request, sameOrigin }) =>
