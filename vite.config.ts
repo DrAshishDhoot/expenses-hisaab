@@ -24,7 +24,14 @@ export default defineConfig({
         workbox: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest,json,woff,woff2}"],
           modifyURLPrefix: { "client/": "/" },
-          navigateFallback: "/offline.html",
+          // Precache the SSR HTML for "/" at SW install time. Workbox fetches it from
+          // the network during activation and stores it in the precache. On any offline
+          // navigation, navigateFallback returns this cached document; its inline script
+          // tags boot the TanStack client bundle (already precached by globPatterns +
+          // CacheFirst), the router reads window.location.pathname, and the real app
+          // renders the requested route — including /add for offline data entry.
+          additionalManifestEntries: [{ url: "/", revision: `build-${Date.now()}` }],
+          navigateFallback: "/",
           navigateFallbackDenylist: [/^\/api\//, /^\/~oauth/],
 
           runtimeCaching: [

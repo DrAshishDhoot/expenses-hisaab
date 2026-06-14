@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation, Navigate } from "@tanstack/react-router";
+import { Link, useLocation, Navigate, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth";
 import type { ReactNode } from "react";
 import { Home, Plus, ListOrdered, Tags, Settings as SettingsIcon, Wifi, WifiOff, RefreshCw, AlertTriangle, Check } from "lucide-react";
 import { subscribe, syncState, pendingCount, fullSync } from "@/lib/sync";
+import { useSwipeNav } from "@/hooks/use-swipe-nav";
+
+const TAB_ORDER = ["/", "/expenses", "/add", "/categories", "/settings"] as const;
 
 function SyncBadge() {
   const [state, setState] = useState(syncState());
@@ -55,6 +58,7 @@ const tabs = [
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const loc = useLocation();
+  const navigate = useNavigate();
   const { user, loading } = useAuth();
   const [online, setOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
 
@@ -68,6 +72,21 @@ export default function AppShell({ children }: { children: ReactNode }) {
       window.removeEventListener("offline", off);
     };
   }, []);
+
+  const currentIdx = TAB_ORDER.indexOf(loc.pathname as typeof TAB_ORDER[number]);
+  const swipeRef = useSwipeNav<HTMLElement>({
+    enabled: currentIdx !== -1,
+    onSwipeLeft: () => {
+      if (currentIdx >= 0 && currentIdx < TAB_ORDER.length - 1) {
+        void navigate({ to: TAB_ORDER[currentIdx + 1] });
+      }
+    },
+    onSwipeRight: () => {
+      if (currentIdx > 0) {
+        void navigate({ to: TAB_ORDER[currentIdx - 1] });
+      }
+    },
+  });
 
   if (loading) return <div className="grid min-h-svh place-items-center text-muted-foreground">Loading…</div>;
   if (!user) return <Navigate to="/login" />;
@@ -87,7 +106,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <main className="relative z-10 mx-auto max-w-2xl px-4 pb-28 pt-4">
+      <main ref={swipeRef} className="relative z-10 mx-auto max-w-2xl px-4 pb-28 pt-4 touch-pan-y">
         {children}
       </main>
 
