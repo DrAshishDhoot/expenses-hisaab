@@ -62,8 +62,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     }
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      if (s) {
+        setSession(s);
+        return;
+      }
+      if (event === "SIGNED_OUT" || event === "USER_DELETED") {
+        setSession(null);
+      }
     });
 
     let cancelled = false;
@@ -79,11 +85,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     void refreshSession();
-    window.addEventListener("online", refreshSession);
+    const onOnline = () => void refreshSession();
+    window.addEventListener("online", onOnline);
 
     return () => {
       cancelled = true;
-      window.removeEventListener("online", refreshSession);
+      window.removeEventListener("online", onOnline);
       sub.subscription.unsubscribe();
     };
   }, []);
